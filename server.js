@@ -9,8 +9,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const privateKey = fs.readFileSync('./ssl/key.pem') || fs.readFileSync('./key.pem');
-const certificate = fs.readFileSync('./ssl/cert.pem') || fs.readFileSync('./cert.pem');
+const privateKey = fs.readFileSync('./ssl/key.pem') ? fs.readFileSync('./ssl/key.pem') : fs.readFileSync('./key.pem');
+const certificate = fs.readFileSync('./ssl/cert.pem') ? fs.readFileSync('./ssl/cert.pem') : fs.readFileSync('./cert.pem');
 const credentials = { key: privateKey, cert: certificate };
 
 const server = https.createServer(credentials, app);
