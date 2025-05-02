@@ -192,8 +192,9 @@ function evaluateAnswers(roomName) {
 }
 
 const httpApp = express();
-httpApp.get("*", (req, res, next) => {
-  res.redirect("https://" + req.headers.host + req.path);
+httpApp.use((req, res) => {
+  // Remove port from host if needed, or adjust as necessary
+  res.redirect("https://" + req.headers.host + req.originalUrl);
 });
 http.createServer(httpApp).listen(8080);
 
