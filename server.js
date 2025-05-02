@@ -9,15 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-let privateKey, certificate;
-if (fs.existsSync('./ssl/key.pem') && fs.existsSync('./ssl/cert.pem')) {
-  privateKey = fs.readFileSync('./ssl/key.pem');
-  certificate = fs.readFileSync('./ssl/cert.pem');
-} else {
-  privateKey = fs.readFileSync('./key.pem');
-  certificate = fs.readFileSync('./cert.pem');
-}
-const credentials = { key: privateKey, cert: certificate };
+
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });

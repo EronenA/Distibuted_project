@@ -76,7 +76,6 @@ function safeSend(data) {
   }
 }
 
-
 // Function to handle joining a room
 function joinRoom() {
   setupUser();
