@@ -5,7 +5,7 @@ import fs from 'fs'
 const questions = JSON.parse(fs.readFileSync('./questions.json'))
 
 let clients = []
-const rooms = {}  // { roomName: { host, sockets, scores, gameInProgress, currentQuestionIndex } }
+const rooms = {}  // { roomName: { host, sockets, scores, gameInProgress, currentQuestionIndex, timers } }
 
 const server = net.createServer((socket) => {
     let nickname = ""
@@ -33,7 +33,8 @@ const server = net.createServer((socket) => {
                 scores: {},
                 gameInProgress: false,
                 currentQuestionIndex: 0,
-                answers: {} // nickname => answer
+                answers: {}, // nickname => answer
+                timers: {}    // To track active timers for each player
             }
             currentRoom = roomName
             socket.write(`Hosting room: ${roomName}. Type /start to begin quiz.\n`)
@@ -41,35 +42,27 @@ const server = net.createServer((socket) => {
         }
 
         // Join a room
-        // Join or create a room
-if (message.startsWith("/join ")) {
-    const roomName = message.split(" ")[1]
+        if (message.startsWith("/join ")) {
+            const roomName = message.split(" ")[1]
+            if (!rooms[roomName]) {
+                rooms[roomName] = {
+                    host: nickname,
+                    sockets: [],
+                    scores: {},
+                    gameInProgress: false,
+                    currentQuestionIndex: 0,
+                    answers: {},
+                    timers: {}
+                }
+                socket.write(`✅ Created and joined room: ${roomName}\n`)
+            } else {
+                socket.write(`✅ Joined existing room: ${roomName}\n`)
+            }
 
-    if (!roomName) {
-        socket.write("❗ Please provide a room name. Usage: /join myroom\n")
-        return
-    }
-
-    if (!rooms[roomName]) {
-        // Auto-create room if it doesn't exist
-        rooms[roomName] = {
-            host: nickname,
-            sockets: [],
-            scores: {},
-            gameInProgress: false,
-            currentQuestionIndex: 0,
-            answers: {}
+            rooms[roomName].sockets.push(socket)
+            currentRoom = roomName
+            return
         }
-        socket.write(`✅ Created and joined room: ${roomName}\n`)
-    } else {
-        socket.write(`✅ Joined existing room: ${roomName}\n`)
-    }
-
-    rooms[roomName].sockets.push(socket)
-    currentRoom = roomName
-    return
-}
-
 
         // Start the quiz (only host can)
         if (message === "/start") {
@@ -141,6 +134,11 @@ ${choicesFormatted}
     room.sockets.forEach(s => {
         s.write(formatted + '\n')
     })
+
+    // Set a timer to auto-evaluate after 10 seconds
+    room.timers[room.currentQuestionIndex] = setTimeout(() => {
+        evaluateAnswers(roomName)
+    }, 10000)  // 10 seconds timeout
 }
 
 function evaluateAnswers(roomName) {
@@ -151,17 +149,29 @@ function evaluateAnswers(roomName) {
 
     room.sockets.forEach(clientSocket => {
         const player = clients.find(c => c.socket === clientSocket)
+
+        // Skip the host's answer
+        if (player.nickname === room.host) {
+            return
+        }
+
         const answer = room.answers[player.nickname]?.toLowerCase()
         const isCorrect = answer === correctLetter
 
         if (isCorrect) {
             room.scores[player.nickname] = (room.scores[player.nickname] || 0) + 1
+        } else if (!answer) {
+            // If no answer was given, mark it as incorrect
+            room.scores[player.nickname] = (room.scores[player.nickname] || 0) + 0
         }
 
-        clientSocket.write(`${player.nickname}, your answer: ${answer} - ${isCorrect ? "✅ Correct" : "❌ Incorrect"}\n`)
+        clientSocket.write(`${player.nickname}, your answer: ${answer || "No answer"} - ${isCorrect ? "✅ Correct" : "❌ Incorrect"}\n`)
     })
 
     room.currentQuestionIndex++
+
+    // Clear the timer
+    clearTimeout(room.timers[room.currentQuestionIndex - 1])
 
     if (room.currentQuestionIndex < questions.length) {
         sendQuestionToRoom(roomName)
@@ -175,7 +185,6 @@ function evaluateAnswers(roomName) {
         room.gameInProgress = false
     }
 }
-
 
 server.listen(5454, () => {
     console.log('Quiz game server running on port 5454')
