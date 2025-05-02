@@ -1,191 +1,183 @@
-import net from 'node:net'
-import fs from 'fs'
+import express from 'express';
+import http from 'http';
+import { WebSocketServer } from 'ws';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-// Load questions at startup
-const questions = JSON.parse(fs.readFileSync('./questions.json'))
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-let clients = []
-const rooms = {}  // { roomName: { host, sockets, scores, gameInProgress, currentQuestionIndex, timers } }
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
 
-const server = net.createServer((socket) => {
-    let nickname = ""
-    let currentRoom = ""
+const questions = JSON.parse(fs.readFileSync('./questions.json')); // Ensure 'questions.json' exists in the root
+const PORT = process.env.PORT || 5454;
 
-    socket.write("Welcome! Set your nickname:\n")
+let rooms = {}; // { roomName: { host, sockets: Map<socket, nickname>, scores, gameInProgress, currentQuestionIndex, answers, timer } }
 
-    socket.on('data', (data) => {
-        const message = data.toString().trim()
+app.use(express.static(path.join(__dirname, 'public')));
 
-        // Set nickname
-        if (!nickname) {
-            nickname = message
-            clients.push({ socket, nickname })
-            socket.write(`Nickname set to ${nickname}. Use /host or /join [room]\n`)
-            return
-        }
+wss.on('connection', (socket) => {
+  let nickname = "";
+  let currentRoom = "";
 
-        // Host a new room
-        if (message.startsWith("/host ")) {
-            const roomName = message.split(" ")[1]
-            rooms[roomName] = {
-                host: nickname,
-                sockets: [socket],
-                scores: {},
-                gameInProgress: false,
-                currentQuestionIndex: 0,
-                answers: {}, // nickname => answer
-                timers: {}    // To track active timers for each player
-            }
-            currentRoom = roomName
-            socket.write(`Hosting room: ${roomName}. Type /start to begin quiz.\n`)
-            return
-        }
+  socket.send(JSON.stringify({ type: 'system', message: 'Welcome! Please enter your nickname.' }));
 
-        // Join a room
-        if (message.startsWith("/join ")) {
-            const roomName = message.split(" ")[1]
-            if (!rooms[roomName]) {
-                rooms[roomName] = {
-                    host: nickname,
-                    sockets: [],
-                    scores: {},
-                    gameInProgress: false,
-                    currentQuestionIndex: 0,
-                    answers: {},
-                    timers: {}
-                }
-                socket.write(`✅ Created and joined room: ${roomName}\n`)
-            } else {
-                socket.write(`✅ Joined existing room: ${roomName}\n`)
-            }
+  socket.on('message', (data) => {
+    const msg = JSON.parse(data.toString());
 
-            rooms[roomName].sockets.push(socket)
-            currentRoom = roomName
-            return
-        }
+    // Set nickname
+    if (!nickname && msg.type === 'nickname') {
+      nickname = msg.nickname;
+      socket.send(JSON.stringify({ type: 'system', message: `Nickname set to ${nickname}` }));
+      return;
+    }
 
-        // Start the quiz (only host can)
-        if (message === "/start") {
-            const room = rooms[currentRoom]
-            if (room.host !== nickname) {
-                socket.write("Only the host can start the quiz.\n")
-                return
-            }
-            room.gameInProgress = true
-            room.currentQuestionIndex = 0
-            room.scores = {}
-            room.answers = {}
-            sendQuestionToRoom(currentRoom)
-            return
-        }
+    // Handle hosting a room
+    if (msg.type === 'host') {
+      const roomName = msg.room;
+      if (rooms[roomName]) {
+        socket.send(JSON.stringify({ type: 'system', message: `Room "${roomName}" already exists.` }));
+        return;
+      }
+      rooms[roomName] = {
+        host: nickname,
+        sockets: new Map([[socket, nickname]]),
+        scores: {},
+        gameInProgress: false,
+        currentQuestionIndex: 0,
+        answers: {},
+        timer: null,
+      };
+      currentRoom = roomName;
+      broadcast(roomName, `${nickname} is hosting room ${roomName}`);
+      // Notify the host to show the start button on the frontend
+      socket.send(JSON.stringify({ type: 'startQuiz', isHost: true }));
+      return;
+    }
 
-        // Answer handling
-        if (rooms[currentRoom]?.gameInProgress) {
-            const room = rooms[currentRoom]
-            room.answers[nickname] = message
+    // Handle joining a room
+    if (msg.type === 'join') {
+      const roomName = msg.room;
+      if (!rooms[roomName]) {
+        socket.send(JSON.stringify({ type: 'system', message: `Room "${roomName}" does not exist.` }));
+        return;
+      }
+      rooms[roomName].sockets.set(socket, nickname);
+      currentRoom = roomName;
+      broadcast(roomName, `${nickname} joined the room.`);
+      socket.send(JSON.stringify({ type: 'system', message: `You joined room ${roomName}.` }));
+      return;
+    }
 
-            if (Object.keys(room.answers).length === room.sockets.length) {
-                evaluateAnswers(currentRoom)
-            }
-            return
-        }
+    // Handle quiz start request
+    if (msg.type === 'startQuiz') {
+      const room = rooms[currentRoom];
+      if (room.host !== nickname) {
+        socket.send(JSON.stringify({ type: 'system', message: 'Only the host can start the quiz.' }));
+        return;
+      }
+      room.gameInProgress = true;
+      room.currentQuestionIndex = 0;
+      room.scores = {};
+      room.answers = {};
+      sendQuestion(currentRoom);
+      return;
+    }
 
-        // Normal message
-        if (!currentRoom) {
-            socket.write("Please /host or /join a room first.\n")
-            return
-        }
+    // Handle chat messages
+    if (msg.type === 'chat') {
+      if (!currentRoom) return;
+      broadcast(currentRoom, `${nickname}: ${msg.message}`);
+      return;
+    }
 
-        // Broadcast message
-        rooms[currentRoom].sockets.forEach(clientSocket => {
-            if (clientSocket !== socket) {
-                clientSocket.write(`${nickname}: ${message}\n`)
-            }
-        })
-    })
+    // Handle answering a question
+    if (msg.type === 'answer') {
+      const room = rooms[currentRoom];
+      if (!room || !room.gameInProgress) return;
 
-    socket.on('end', () => {
-        clients = clients.filter(c => c.socket !== socket)
-        Object.values(rooms).forEach(room => {
-            room.sockets = room.sockets.filter(s => s !== socket)
-        })
-    })
+      room.answers[nickname] = msg.answer.toLowerCase();
+      if (Object.keys(room.answers).length === room.sockets.size) {
+        clearTimeout(room.timer);
+        evaluateAnswers(currentRoom);
+      }
+    }
+  });
 
-    socket.on('error', (err) => {
-        console.error(`Error: ${err.message}`)
-    })
-})
+  socket.on('close', () => {
+    for (const roomName in rooms) {
+      const room = rooms[roomName];
+      if (room.sockets.has(socket)) {
+        room.sockets.delete(socket);
+        broadcast(roomName, `${nickname} disconnected.`);
+      }
+    }
+  });
+});
 
-function sendQuestionToRoom(roomName) {
-    const room = rooms[roomName]
-    const questionObj = questions[room.currentQuestionIndex]
+function broadcast(roomName, message) {
+  const room = rooms[roomName];
+  if (!room) return;
+  room.sockets.forEach((_, sock) => {
+    sock.send(JSON.stringify({ type: 'chat', message }));
+  });
+}
 
-    const choicesFormatted = questionObj.choices
-        .map((choice, index) => `${String.fromCharCode(97 + index)}) ${choice}`)
-        .join('\n')
+function sendQuestion(roomName) {
+  const room = rooms[roomName];
+  const q = questions[room.currentQuestionIndex];
+  const choices = q.choices.map((c, i) => `${String.fromCharCode(97 + i)}) ${c}`).join('\n');
+  const formatted = `\n📣 Question ${room.currentQuestionIndex + 1}: ${q.question}\n${choices}`;
 
-    const formatted = `
-📣 Question ${room.currentQuestionIndex + 1}: ${questionObj.question}
-${choicesFormatted}
-(Type your answer: a, b, c, or d)
-    `
-    room.answers = {}
+  room.answers = {};
+  room.timer = setTimeout(() => {
+    evaluateAnswers(roomName);
+  }, 10000); // 10 seconds
 
-    room.sockets.forEach(s => {
-        s.write(formatted + '\n')
-    })
-
-    // Set a timer to auto-evaluate after 10 seconds
-    room.timers[room.currentQuestionIndex] = setTimeout(() => {
-        evaluateAnswers(roomName)
-    }, 10000)  // 10 seconds timeout
+  room.sockets.forEach((_, sock) => {
+    sock.send(JSON.stringify({
+      type: 'question',
+      question: formatted,
+    }));
+  });
 }
 
 function evaluateAnswers(roomName) {
-    const room = rooms[roomName]
-    const question = questions[room.currentQuestionIndex]
-    const correctIndex = question.choices.findIndex(c => c === question.answer)
-    const correctLetter = String.fromCharCode(97 + correctIndex) // a/b/c/d
+  const room = rooms[roomName];
+  const q = questions[room.currentQuestionIndex];
+  const correctLetter = String.fromCharCode(97 + q.choices.findIndex(c => c === q.answer));
 
-    room.sockets.forEach(clientSocket => {
-        const player = clients.find(c => c.socket === clientSocket)
-
-        // Skip the host's answer
-        if (player.nickname === room.host) {
-            return
-        }
-
-        const answer = room.answers[player.nickname]?.toLowerCase()
-        const isCorrect = answer === correctLetter
-
-        if (isCorrect) {
-            room.scores[player.nickname] = (room.scores[player.nickname] || 0) + 1
-        } else if (!answer) {
-            // If no answer was given, mark it as incorrect
-            room.scores[player.nickname] = (room.scores[player.nickname] || 0) + 0
-        }
-
-        clientSocket.write(`${player.nickname}, your answer: ${answer || "No answer"} - ${isCorrect ? "✅ Correct" : "❌ Incorrect"}\n`)
-    })
-
-    room.currentQuestionIndex++
-
-    // Clear the timer
-    clearTimeout(room.timers[room.currentQuestionIndex - 1])
-
-    if (room.currentQuestionIndex < questions.length) {
-        sendQuestionToRoom(roomName)
-    } else {
-        room.sockets.forEach(s => {
-            s.write("\n🎉 Quiz Over! Final Scores:\n")
-            for (const [nick, score] of Object.entries(room.scores)) {
-                s.write(`${nick}: ${score}\n`)
-            }
-        })
-        room.gameInProgress = false
+  room.sockets.forEach((nickname, sock) => {
+    if (nickname === room.host) return;
+    const answer = room.answers[nickname]?.toLowerCase();
+    const isCorrect = answer === correctLetter;
+    if (isCorrect) {
+      room.scores[nickname] = (room.scores[nickname] || 0) + 1;
     }
+    sock.send(JSON.stringify({
+      type: 'result',
+      message: `${nickname}, you answered: ${answer || 'No Answer'} - ${isCorrect ? '✅ Correct' : '❌ Incorrect'}`,
+    }));
+  });
+
+  room.currentQuestionIndex++;
+  if (room.currentQuestionIndex < questions.length) {
+    setTimeout(() => sendQuestion(roomName), 2000);
+  } else {
+    room.gameInProgress = false;
+    room.sockets.forEach((_, sock) => {
+      sock.send(JSON.stringify({
+        type: 'final',
+        scores: room.scores,
+      }));
+    });
+  }
 }
 
-server.listen(5454, () => {
-    console.log('Quiz game server running on port 5454')
-})
+// Start the server
+server.listen(PORT, () => {
+  console.log(`Quiz game server running on port ${PORT}`);
+});

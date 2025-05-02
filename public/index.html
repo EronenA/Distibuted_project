@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <script defer src="main.js"></script>
+    <title>Quiz Game</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #f2f2f2;
+            margin: 0;
+            padding: 0;
+        }
+        #container {
+            max-width: 600px;
+            margin: 40px auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 12px rgba(0,0,0,0.1);
+        }
+        #messages {
+            height: 300px;
+            overflow-y: scroll;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 15px;
+            white-space: pre-line;
+            background: #fafafa;
+        }
+        input, button {
+            padding: 10px;
+            margin: 5px 0;
+            width: 100%;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<!-- Example HTML structure -->
+ <body>
+  <!-- Example HTML structure -->
+<div id="lobby">
+    <input type="text" id="nickname" placeholder="Enter your nickname">
+    <input type="text" id="room" placeholder="Enter room name">
+    <button onclick="hostRoom()">Host Room</button>
+    <button onclick="joinRoom()">Join Room</button>
+  </div>
+  
+  <div id="game" style="display:none;">
+    <div id="messages"></div>
+    <input type="text" id="input" placeholder="Type a message">
+    <button id="startButton" style="display:none;">Start Quiz</button>
+    <div id="answerButtons" style="display: none;">
+        <button onclick="sendAnswer('A')">A</button>
+        <button onclick="sendAnswer('B')">B</button>
+        <button onclick="sendAnswer('C')">C</button>
+        <button onclick="sendAnswer('D')">D</button>
+      </div>
+  </div>
+  
+  
+    
+ </body>
+
+  
+</html>
