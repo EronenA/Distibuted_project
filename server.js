@@ -191,16 +191,12 @@ function evaluateAnswers(roomName) {
   }
 }
 
-function ensureSecure(req, res, next) {
-  if (req.secure) {
-      // Request is already secure (HTTPS)
-      return next();
-  }
-  // Redirect to HTTPS version of the URL
-  res.redirect('https://' + req.hostname + req.originalUrl);
-}
+const httpApp = express();
+httpApp.get("*", (req, res, next) => {
+  res.redirect("https://" + req.headers.host + req.path);
+});
+http.createServer(httpApp).listen(8080);
 
-app.use(ensureSecure);
 
 // Start the server
 server.listen(PORT, () => {
