@@ -191,12 +191,16 @@ function evaluateAnswers(roomName) {
   }
 }
 
-// Redirect HTTP to HTTPS
-http.createServer((req, res) => {
-  const host = req.headers['host'] ? req.headers['host'].replace(/:\d+$/, `:${PORT}`) : `localhost:${PORT}`;
-  res.writeHead(301, { "Location": `https://${host}${req.url}` });
-  res.end();
-}).listen(8080);
+function ensureSecure(req, res, next) {
+  if (req.secure) {
+      // Request is already secure (HTTPS)
+      return next();
+  }
+  // Redirect to HTTPS version of the URL
+  res.redirect('https://' + req.hostname + req.originalUrl);
+}
+
+app.use(ensureSecure);
 
 // Start the server
 server.listen(PORT, () => {
