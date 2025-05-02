@@ -1,5 +1,5 @@
 import express from 'express';
-import http from 'http';
+import https from 'https';
 import { WebSocketServer } from 'ws';
 import fs from 'fs';
 import path from 'path';
@@ -9,7 +9,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const server = http.createServer(app);
+const privateKey = fs.readFileSync('./ssl/key.pem');
+const certificate = fs.readFileSync('./ssl/cert.pem');
+const credentials = { key: privateKey, cert: certificate };
+
+const server = https.createServer(credentials, app);
 const wss = new WebSocketServer({ server });
 
 const questions = JSON.parse(fs.readFileSync('./questions.json')); // Ensure 'questions.json' exists in the root
@@ -154,8 +158,11 @@ function evaluateAnswers(roomName) {
     if (nickname === room.host) return;
     const answer = room.answers[nickname]?.toLowerCase();
     const isCorrect = answer === correctLetter;
+    if (!room.scores[nickname]) {
+      room.scores[nickname] = 0
+    }
     if (isCorrect) {
-      room.scores[nickname] = (room.scores[nickname] || 0) + 1;
+      room.scores[nickname] = room.scores[nickname] + 1;
     }
     sock.send(JSON.stringify({
       type: 'result',

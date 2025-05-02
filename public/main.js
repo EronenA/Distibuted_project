@@ -1,4 +1,4 @@
-const socket = new WebSocket(`ws://${location.hostname}:5454`);
+const socket = new WebSocket(`wss://${location.hostname}:5454`);
 
 const nicknameInput = document.getElementById('nickname');
 const roomInput = document.getElementById('room');
