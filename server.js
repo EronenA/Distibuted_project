@@ -1,100 +1,182 @@
 import net from 'node:net'
+import fs from 'fs'
 
-// Variables to store clients and channels
+// Load questions at startup
+const questions = JSON.parse(fs.readFileSync('./questions.json'))
+
 let clients = []
-const channels = {}
+const rooms = {}  // { roomName: { host, sockets, scores, gameInProgress, currentQuestionIndex } }
 
 const server = net.createServer((socket) => {
-    // variable to store nicknames
     let nickname = ""
-    let currentChannel = "general"
+    let currentRoom = ""
 
-    if (!channels[currentChannel]) {
-        channels[currentChannel] = []
-    }
+    socket.write("Welcome! Set your nickname:\n")
 
-
-    channels[currentChannel].push(socket)
-    // Send an initial message to the new client
-    socket.write('Welcome to the server! First, set your nickname \r')
-
-
-    // Handle incoming data from the client
     socket.on('data', (data) => {
         const message = data.toString().trim()
 
+        // Set nickname
         if (!nickname) {
             nickname = message
-            clients.push( {socket, nickname})
-            console.log(`${nickname} has connected`)
-            socket.write(`Nickname set to ${nickname}`)
+            clients.push({ socket, nickname })
+            socket.write(`Nickname set to ${nickname}. Use /host or /join [room]\n`)
+            return
+        }
 
-        // Channel switching with keyword /join
-        } else if (message.startsWith("/join ")) {
-            console.log("Swithinhg channel")
-            // take the 6 first letters off the message
-            const channel = message.slice(6).trim()
-            if (!channels[channel]) {
-                channels[channel] = []
+        // Host a new room
+        if (message.startsWith("/host ")) {
+            const roomName = message.split(" ")[1]
+            rooms[roomName] = {
+                host: nickname,
+                sockets: [socket],
+                scores: {},
+                gameInProgress: false,
+                currentQuestionIndex: 0,
+                answers: {} // nickname => answer
             }
-            channels[currentChannel] = channels[currentChannel].filter(client => client !== socket)
-            currentChannel = channel
-            channels[channel].push(socket)
-            socket.write(`Joined channel: ${channel}`)
-
-        // Private message with keyword /private
-        } else if (message.startsWith("/private ")) {
-            
-            /* This handles private messages
-            The message consist of 3 parts: 
-            0 (command): /private, 1 (target) and 2 (message parts)   
-            */     
-            const parts = message.split(" ")
-            const target = parts[1]
-            const privateMessage = parts.slice(2).join(" ")
-
-            const receiver = clients.find(client => client.nickname === target)
-
-            if (receiver) {
-                receiver.socket.write(`Private message from ${nickname}: ${privateMessage}`)
-        } else {
-            socket.write(`User ${target} not found`)
+            currentRoom = roomName
+            socket.write(`Hosting room: ${roomName}. Type /start to begin quiz.\n`)
+            return
         }
-        }
-        
-        else {
-            console.log(`${nickname}: ${message}`)
 
-            channels[currentChannel].forEach(clientSocket => {
-                if (clientSocket !== socket) {
-                    clientSocket.write(`${nickname}: ${message}`)
-                }
-            })
+        // Join a room
+        // Join or create a room
+if (message.startsWith("/join ")) {
+    const roomName = message.split(" ")[1]
+
+    if (!roomName) {
+        socket.write("❗ Please provide a room name. Usage: /join myroom\n")
+        return
+    }
+
+    if (!rooms[roomName]) {
+        // Auto-create room if it doesn't exist
+        rooms[roomName] = {
+            host: nickname,
+            sockets: [],
+            scores: {},
+            gameInProgress: false,
+            currentQuestionIndex: 0,
+            answers: {}
         }
-        
+        socket.write(`✅ Created and joined room: ${roomName}\n`)
+    } else {
+        socket.write(`✅ Joined existing room: ${roomName}\n`)
+    }
+
+    rooms[roomName].sockets.push(socket)
+    currentRoom = roomName
+    return
+}
+
+
+        // Start the quiz (only host can)
+        if (message === "/start") {
+            const room = rooms[currentRoom]
+            if (room.host !== nickname) {
+                socket.write("Only the host can start the quiz.\n")
+                return
+            }
+            room.gameInProgress = true
+            room.currentQuestionIndex = 0
+            room.scores = {}
+            room.answers = {}
+            sendQuestionToRoom(currentRoom)
+            return
+        }
+
+        // Answer handling
+        if (rooms[currentRoom]?.gameInProgress) {
+            const room = rooms[currentRoom]
+            room.answers[nickname] = message
+
+            if (Object.keys(room.answers).length === room.sockets.length) {
+                evaluateAnswers(currentRoom)
+            }
+            return
+        }
+
+        // Normal message
+        if (!currentRoom) {
+            socket.write("Please /host or /join a room first.\n")
+            return
+        }
+
+        // Broadcast message
+        rooms[currentRoom].sockets.forEach(clientSocket => {
+            if (clientSocket !== socket) {
+                clientSocket.write(`${nickname}: ${message}\n`)
+            }
+        })
     })
 
-    // When a client disconnects, remove it from the clients array
     socket.on('end', () => {
-        // Remove disconnected client from clients array
-        clients = clients.filter(client => client.socket !== socket)
-        console.log('A client has disconnected and removed from the clients array.')
+        clients = clients.filter(c => c.socket !== socket)
+        Object.values(rooms).forEach(room => {
+            room.sockets = room.sockets.filter(s => s !== socket)
+        })
     })
 
-    // Handle any client errors
     socket.on('error', (err) => {
-        console.error('Error with client connection: ' + err.message)
+        console.error(`Error: ${err.message}`)
+    })
+})
+
+function sendQuestionToRoom(roomName) {
+    const room = rooms[roomName]
+    const questionObj = questions[room.currentQuestionIndex]
+
+    const choicesFormatted = questionObj.choices
+        .map((choice, index) => `${String.fromCharCode(97 + index)}) ${choice}`)
+        .join('\n')
+
+    const formatted = `
+📣 Question ${room.currentQuestionIndex + 1}: ${questionObj.question}
+${choicesFormatted}
+(Type your answer: a, b, c, or d)
+    `
+    room.answers = {}
+
+    room.sockets.forEach(s => {
+        s.write(formatted + '\n')
+    })
+}
+
+function evaluateAnswers(roomName) {
+    const room = rooms[roomName]
+    const question = questions[room.currentQuestionIndex]
+    const correctIndex = question.choices.findIndex(c => c === question.answer)
+    const correctLetter = String.fromCharCode(97 + correctIndex) // a/b/c/d
+
+    room.sockets.forEach(clientSocket => {
+        const player = clients.find(c => c.socket === clientSocket)
+        const answer = room.answers[player.nickname]?.toLowerCase()
+        const isCorrect = answer === correctLetter
+
+        if (isCorrect) {
+            room.scores[player.nickname] = (room.scores[player.nickname] || 0) + 1
+        }
+
+        clientSocket.write(`${player.nickname}, your answer: ${answer} - ${isCorrect ? "✅ Correct" : "❌ Incorrect"}\n`)
     })
 
-   
-})
+    room.currentQuestionIndex++
 
-
-server.on('connection', () => {
-    console.log('A client has connected!') 
-})
+    if (room.currentQuestionIndex < questions.length) {
+        sendQuestionToRoom(roomName)
+    } else {
+        room.sockets.forEach(s => {
+            s.write("\n🎉 Quiz Over! Final Scores:\n")
+            for (const [nick, score] of Object.entries(room.scores)) {
+                s.write(`${nick}: ${score}\n`)
+            }
+        })
+        room.gameInProgress = false
+    }
+}
 
 
 server.listen(5454, () => {
-    console.log('Echo server listening on port 5454')
+    console.log('Quiz game server running on port 5454')
 })
