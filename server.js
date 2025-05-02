@@ -1,10 +1,9 @@
 import express from 'express';
-import https from 'https';
+import http from 'http';
 import { WebSocketServer } from 'ws';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import http from 'http';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,7 +19,7 @@ if (fs.existsSync('./ssl/key.pem') && fs.existsSync('./ssl/cert.pem')) {
 }
 const credentials = { key: privateKey, cert: certificate };
 
-const server = https.createServer(credentials, app);
+const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 const questions = JSON.parse(fs.readFileSync('./questions.json')); // Ensure 'questions.json' exists in the root
@@ -190,14 +189,6 @@ function evaluateAnswers(roomName) {
     });
   }
 }
-
-const httpApp = express();
-httpApp.use((req, res) => {
-  // Remove port from host if needed, or adjust as necessary
-  res.redirect("https://" + req.headers.host + req.originalUrl);
-});
-http.createServer(httpApp).listen(8080);
-
 
 // Start the server
 server.listen(PORT, () => {
