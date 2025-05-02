@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import http from 'http';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -189,6 +190,13 @@ function evaluateAnswers(roomName) {
     });
   }
 }
+
+// Redirect HTTP to HTTPS
+http.createServer((req, res) => {
+  const host = req.headers['host'] ? req.headers['host'].replace(/:\d+$/, `:${PORT}`) : `localhost:${PORT}`;
+  res.writeHead(301, { "Location": `https://${host}${req.url}` });
+  res.end();
+}).listen(80);
 
 // Start the server
 server.listen(PORT, () => {
