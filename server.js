@@ -196,7 +196,7 @@ http.createServer((req, res) => {
   const host = req.headers['host'] ? req.headers['host'].replace(/:\d+$/, `:${PORT}`) : `localhost:${PORT}`;
   res.writeHead(301, { "Location": `https://${host}${req.url}` });
   res.end();
-}).listen(5454);
+}).listen(8080);
 
 // Start the server
 server.listen(PORT, () => {
