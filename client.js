@@ -1,23 +1,49 @@
-// client.js
-const net = require('net');
+import * as net from "net"
+import readline from "readline"
 
-const expressions = [
-  "3 + 5",
-  "12 / 4",
-  "Math.sqrt(64)",
-  "2 ** 10",
-  "invalid + 1"
-];
+// Use of readline for reading client input and output
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+})
 
-const client = new net.Socket();
-client.connect(4000, 'localhost', () => {
-  client.write(JSON.stringify(expressions));
-});
+const client = net.createConnection({
+    
+    host: "127.0.0.1",
+    port: 5454
+    }, () => {
+    console.log("Connected")
+} 
+)
 
-client.on('data', (data) => {
-  const results = JSON.parse(data.toString());
-  results.forEach(r => {
-    console.log(`${r.expr} => ${r.result !== null ? r.result : `Error: ${r.error}`}`);
-  });
-  client.end();
-});
+
+client.on("data", (data) => {
+    console.log(data.toString())
+    if (data.toString().includes("set your nickname:")) {
+        rl.question("Enter your nickname: ", (nickname) => {
+            client.write(nickname)
+            
+        })
+    }
+})
+
+client.on("error", (err) => {
+    console.log(`Error occured: ${err.message}`)
+})
+
+
+const sendMessage = (message) => {
+    client.write(message)
+}
+
+
+rl.on("line", (input) => {
+
+    if (input === "end") {
+        // For disconnecting typing "end" will trigger it
+        client.end()
+        rl.close()
+    } else {
+    sendMessage(input)
+    }
+})
